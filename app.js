@@ -1047,6 +1047,19 @@ let grupoAbierto = null;
 let mesBanda = null;
 let cuotaActual = null;          // navigator.storage.estimate(), refrescado aparte del render
 
+/* En el móvil, cerrar el desplegable nativo dispara un clic cuyo target es el
+   velo: si eso cierra la hoja, elegir en un <select> equivale a cancelar. Solo
+   se cierra cuando el dedo BAJÓ sobre el velo, no cuando solo lo suelta ahí. */
+function cierraPorFuera(velo, alCerrar){
+  let bajoEnElVelo = false;
+  velo.addEventListener('pointerdown', ev => { bajoEnElVelo = ev.target === velo; }, true);
+  velo.addEventListener('click', ev => {
+    if (ev.target !== velo || !bajoEnElVelo) return;   // sin dedo bajando ahí, no es un toque fuera
+    bajoEnElVelo = false;
+    alCerrar();
+  });
+}
+
 function icono(d){ return '<svg viewBox="0 0 24 24">' + d + '</svg>'; }
 const ICONOS = {
   hoy:'<path d="M12 21c-4 0-7-3-7-7 0-5 7-11 7-11s7 6 7 11c0 4-3 7-7 7z"/><path d="M12 21V9"/>',
@@ -1116,8 +1129,8 @@ function hoja({ titulo, campos = [], aceptar = 'Guardar', extra = '' }){
       });
       return o;
     };
+    cierraPorFuera(velo, () => { velo.remove(); res(null); });
     velo.addEventListener('click', ev => {
-      if (ev.target === velo){ velo.remove(); res(null); return; }
       const x = ev.target.closest('[data-x]');
       if (!x) return;
       const datos = x.dataset.x === 'si' ? leer() : null;
@@ -1137,8 +1150,8 @@ function confirmar(texto, aceptar = 'Sí'){
       '<div class="fila-btns"><button class="btn fantasma" data-x="no">Cancelar</button>' +
       '<button class="btn principal" data-x="si">' + esc(aceptar) + '</button></div></div>';
     capas().appendChild(velo);
+    cierraPorFuera(velo, () => { velo.remove(); res(false); });
     velo.addEventListener('click', ev => {
-      if (ev.target === velo){ velo.remove(); res(false); return; }
       const x = ev.target.closest('[data-x]');
       if (!x) return;
       velo.remove(); res(x.dataset.x === 'si');
@@ -1148,39 +1161,58 @@ function confirmar(texto, aceptar = 'Sí'){
 
 /* ── formularios concretos ── */
 
-function camposPlanta(p){
+function camposPlanta(p, pre){
   const zonas = estado.zonas.map(z => [z.id, z.nombre]);
+  const v = (k, porDefecto) => (pre && pre[k] !== undefined) ? pre[k] : porDefecto;
   return [
-    { k:'nombre', etiqueta:'Nombre', valor:p ? p.nombre : '', ayuda:'limonero del bancal 2' },
+    { k:'nombre', etiqueta:'Nombre', valor: pre ? (pre.nombre || '') : (p ? p.nombre : ''),
+      ayuda:'limonero del bancal 2' },
     { k:'taxon_id', etiqueta:'Taxón (aporta la fenología)', tipo:'select',
-      opciones:[['','— sin taxón —']].concat(estado.taxones.slice()
-        .sort((a,b) => a.nombre.localeCompare(b.nombre,'es')).map(t => [t.id, t.nombre])),
-      valor:p ? (p.taxon_id || '') : '' },
-    { k:'especie', etiqueta:'Especie (opcional)', valor:p ? p.especie : '' },
-    { k:'zona_id', etiqueta:'Zona', tipo:'select', opciones:zonas, valor:p ? p.zona_id : (zonas[0] || [''])[0] },
+      opciones:[['','— sin taxón —']]
+        .concat(estado.taxones.slice().sort((a,b) => a.nombre.localeCompare(b.nombre,'es'))
+          .map(t => [t.id, t.nombre]))
+        .concat(estado.taxones.length < SEMILLA_TAXONES.length
+          ? [['__semilla','＋ Traer el catálogo semilla (' + SEMILLA_TAXONES.length + ')']] : [])
+        .concat([['__nuevo','＋ Crear un taxón nuevo…']]),
+      valor: pre && pre.taxon_id !== undefined ? pre.taxon_id : (p ? (p.taxon_id || '') : '') },
+    { k:'especie', etiqueta:'Especie (opcional)', valor: v('especie', p ? p.especie : '') },
+    { k:'zona_id', etiqueta:'Zona', tipo:'select', opciones:zonas,
+      valor: v('zona_id', p ? p.zona_id : (zonas[0] || [''])[0]) },
     { k:'perfil_hidrico', etiqueta:'Perfil hídrico', tipo:'select',
-      opciones:Object.entries(PERFILES).map(([k,v]) => [k, v.etiqueta]),
-      valor:p ? p.perfil_hidrico : 'maceta_grande' },
+      opciones:Object.entries(PERFILES).map(([k,val]) => [k, val.etiqueta]),
+      valor: v('perfil_hidrico', p ? p.perfil_hidrico : 'maceta_grande') },
     { k:'intervalo_calido_dias', etiqueta:'Riego en época cálida (días)', tipo:'numero',
-      valor:p ? p.intervalo_calido_dias : 3 },
+      valor: v('intervalo_calido_dias', p ? p.intervalo_calido_dias : 3) },
     { k:'intervalo_frio_dias', etiqueta:'Riego en época fría (días)', tipo:'numero',
-      valor:p ? p.intervalo_frio_dias : 7 },
+      valor: v('intervalo_frio_dias', p ? p.intervalo_frio_dias : 7) },
     { k:'mes_corte_calido', etiqueta:'La época cálida empieza en', tipo:'select',
       opciones:MESES.map((m,i) => [i+1, m[0].toUpperCase() + m.slice(1)]),
-      valor:p ? p.mes_corte_calido : 5 },
-    { k:'litros', etiqueta:'Litros (informativo)', tipo:'numero', valor:p ? p.litros : null },
-    { k:'sustrato', etiqueta:'Sustrato (informativo)', valor:p ? p.sustrato : '' },
-    { k:'comestible', etiqueta:'Se come', tipo:'check', valor:p ? p.comestible : false },
+      valor: v('mes_corte_calido', p ? p.mes_corte_calido : 5) },
+    { k:'litros', etiqueta:'Litros (informativo)', tipo:'numero', valor: v('litros', p ? p.litros : null) },
+    { k:'sustrato', etiqueta:'Sustrato (informativo)', valor: v('sustrato', p ? p.sustrato : '') },
+    { k:'comestible', etiqueta:'Se come', tipo:'check', valor: v('comestible', p ? p.comestible : false) },
   ];
 }
 
-async function pedirPlanta(p){
+async function pedirPlanta(p, pre){
   if (!estado.zonas.length){
     aviso('Antes de una planta hace falta una zona. Créala en Ajustes.');
     return null;
   }
-  const d = await hoja({ titulo: p ? 'Editar planta' : 'Nueva planta', campos: camposPlanta(p) });
+  const d = await hoja({ titulo: p ? 'Editar planta' : 'Nueva planta', campos: camposPlanta(p, pre) });
   if (!d) return null;
+
+  /* Las dos salidas del desplegable de taxón vuelven al mismo formulario con
+     lo ya escrito: elegir taxón no puede obligar a empezar de nuevo. */
+  if (d.taxon_id === '__semilla'){
+    await importarSemilla(true);
+    return pedirPlanta(p, Object.assign({}, d, { taxon_id:'' }));
+  }
+  if (d.taxon_id === '__nuevo'){
+    const nuevo = await pedirTaxon(null, d.nombre);
+    return pedirPlanta(p, Object.assign({}, d, { taxon_id: nuevo || '' }));
+  }
+
   if (!d.nombre.trim()){ aviso('La planta necesita un nombre.'); return null; }
   d.intervalo_calido_dias = Math.max(1, d.intervalo_calido_dias || 3);
   d.intervalo_frio_dias = Math.max(1, d.intervalo_frio_dias || 7);
@@ -1350,6 +1382,7 @@ function filaPlanta(f){
   return '<div class="fila' + (sel ? ' sel' : '') + '">' +
     '<button class="toggle" data-a="marcar" data-id="' + f.planta.id + '" aria-pressed="' + sel + '">' +
       '<span class="marca">' + icono(ICONOS.check) + '</span>' +
+      miniaturaHTML(f.planta, 44) +
       '<span class="cuerpo"><span class="nombre">' + esc(f.planta.nombre) + '</span>' +
       '<span class="meta">' + esc(meta) + '</span>' +
       '<span class="reserva">' + barra + '</span></span>' +
@@ -1466,6 +1499,7 @@ function vistaPlantas(){
       const est = estadoDe(r.saldo);
       const n = Math.round(r.saldo);
       return '<div class="fila"><button class="toggle" data-a="ficha" data-id="' + p.id + '">' +
+        miniaturaHTML(p, 44) +
         '<span class="cuerpo"><span class="nombre">' + esc(p.nombre) + '</span>' +
         '<span class="meta">' + esc(PERFILES[p.perfil_hidrico].etiqueta.toLowerCase()) +
         ' · cada ' + r.intervalo + ' días' + (p.comestible ? ' · se come' : '') + '</span></span>' +
@@ -1477,6 +1511,7 @@ function vistaPlantas(){
     (huerfanas.length ? grupo('Sin zona', huerfanas) : '') +
     (bajas.length ? '<section class="bloque"><h2>De baja · ' + bajas.length + '</h2><div class="lista">' +
       bajas.map(p => '<div class="fila"><button class="toggle" data-a="ficha" data-id="' + p.id + '">' +
+        miniaturaHTML(p, 44) +
         '<span class="cuerpo"><span class="nombre">' + esc(p.nombre) + '</span>' +
         '<span class="meta">dada de baja</span></span></button></div>').join('') +
       '</div></section>' : '') +
@@ -1557,7 +1592,8 @@ function vistaFicha(id){
   const ultimo = ctx.riego.get(p.id);
 
   return '<section class="bloque"><div class="tarjeta">' +
-    '<div style="display:flex;align-items:center;gap:16px">' +
+    '<div style="display:flex;align-items:center;gap:14px">' +
+      miniaturaHTML(p, 62) +
       '<div class="grande dias ' + est + '" style="min-width:0"><b style="font-size:2.4rem">' + (n > 0 ? '+' + n : n) + '</b></div>' +
       '<div><div class="pie">días de reserva</div>' +
       '<div class="pie">' + (ultimo ? 'último riego ' + fechaCorta(ultimo) : 'sin riegos registrados') + '</div></div>' +
@@ -1760,8 +1796,8 @@ function elegirTipo(lista, titulo){
         '<button class="btn" data-t="' + t + '">' + esc(TIPOS_EVENTO[t] || t) + '</button>').join('') +
       '</div><button class="btn fantasma ancho" style="margin-top:12px" data-t="">Cancelar</button></div>';
     capas().appendChild(velo);
+    cierraPorFuera(velo, () => { velo.remove(); res(null); });
     velo.addEventListener('click', ev => {
-      if (ev.target === velo){ velo.remove(); res(null); return; }
       const b = ev.target.closest('[data-t]');
       if (!b) return;
       velo.remove();
@@ -1946,16 +1982,18 @@ function vistaTaxon(id){
     '</section>';
 }
 
-async function pedirTaxon(t){
+async function pedirTaxon(t, sugerencia){
   const d = await hoja({
     titulo: t ? 'Renombrar taxón' : 'Nuevo taxón',
-    campos:[{ k:'nombre', etiqueta:'Nombre', valor:t ? t.nombre : '', ayuda:'Tomate, Limonero…' }],
+    campos:[{ k:'nombre', etiqueta:'Nombre', valor: t ? t.nombre : (sugerencia || ''), ayuda:'Tomate, Limonero…' }],
+    extra: t ? '' : '<p class="pie">Un taxón es la especie, no la planta concreta: «Tomate», no «tomates del bancal 2». ' +
+      'Sus ventanas de poda o siembra las comparten todas las plantas que lo usen.</p>',
   });
   if (!d || !d.nombre.trim()) return null;
   const obj = t ? Object.assign({}, t, { nombre:d.nombre.trim() })
                 : { id:uid(), nombre:d.nombre.trim(), ventanas:[] };
   await guardarTaxon(obj);
-  render();
+  if (!sugerencia) render();
   return obj.id;
 }
 
@@ -1997,7 +2035,7 @@ async function pedirVentana(taxonId, indice){
 }
 
 /* Nunca sobrescribe: reimportar no pisa las correcciones propias. */
-async function importarSemilla(){
+async function importarSemilla(silenciosa){
   const existentes = new Set(estado.taxones.map(t => t.nombre.trim().toLowerCase()));
   let nuevos = 0, saltados = 0;
   for (const [nombre, ventanas] of SEMILLA_TAXONES){
@@ -2012,8 +2050,11 @@ async function importarSemilla(){
     await guardarTaxon(t);
     nuevos++;
   }
-  render();
-  aviso('Catálogo: ' + nuevos + ' taxones añadidos' + (saltados ? ', ' + saltados + ' ya los tenías' : '') + '.');
+  if (!silenciosa){
+    render();
+    aviso('Catálogo: ' + nuevos + ' taxones añadidos' + (saltados ? ', ' + saltados + ' ya los tenías' : '') + '.');
+  }
+  return nuevos;
 }
 
 function vistaAjustes(){
@@ -2198,6 +2239,21 @@ function fotosDe(planta){
     .flatMap(e => e.media_ids.map(id => ({ id, evento:e })))
     .filter(x => mediaPorId(x.id))
     .sort((a,b) => b.evento.fecha.localeCompare(a.evento.fecha));
+}
+
+/* La foto más reciente de una planta es su cara en las listas. */
+function fotoPortada(planta){
+  const fs = fotosDe(planta);
+  return fs.length ? fs[0].id : null;
+}
+function miniaturaHTML(planta, tam){
+  const px = (tam || 44) + 'px';
+  const id = fotoPortada(planta);
+  if (!id) return '<span class="mini vacia" style="width:' + px + ';height:' + px + '">' +
+    icono('<path d="M4 20h16"/><path d="M12 20V9"/><path d="M12 13c-3 0-4.5-1.5-4.5-4.5C10.5 8.5 12 10 12 13z"/>' +
+          '<path d="M12 14c3 0 4.5-1.5 4.5-4.5C13.5 9.5 12 11 12 14z"/>') + '</span>';
+  return '<span class="mini" style="width:' + px + ';height:' + px + '">' +
+    '<img data-media="' + id + '" data-mini="1" alt=""></span>';
 }
 
 const bytesMedia = () => estado.media.reduce((n, m) => n + (m.bytes || 0), 0);
@@ -2464,8 +2520,8 @@ function elegirAgente(titulo, preseleccion){
     capas().appendChild(velo);
 
     const fotos = [];
+    cierraPorFuera(velo, () => { velo.remove(); res(null); });
     velo.addEventListener('click', async ev => {
-      if (ev.target === velo){ velo.remove(); res(null); return; }
       const b = ev.target.closest('[data-x]');
       if (!b) return;
       const x = b.dataset.x;
@@ -2508,8 +2564,8 @@ function elegirSeveridad(nombreAgente){
       '<button class="btn fantasma ancho" style="margin-top:12px" data-x="0">Ya no se ve nada</button>' +
       '<button class="btn fantasma ancho" style="margin-top:8px" data-x="">Cancelar</button></div>';
     capas().appendChild(velo);
+    cierraPorFuera(velo, () => { velo.remove(); res(null); });
     velo.addEventListener('click', ev => {
-      if (ev.target === velo){ velo.remove(); res(null); return; }
       const b = ev.target.closest('[data-x]');
       if (!b) return;
       velo.remove();
@@ -2845,6 +2901,7 @@ function vistaSanidadHoy(){
     const p = ep.alcance.tipo === 'planta' ? plantaPorId(ep.alcance.id) : null;
     const u = ultimaObservacion(ep);
     return '<div class="fila"><button class="toggle" data-a="episodio-ver" data-id="' + ep.id + '">' +
+      (p ? miniaturaHTML(p, 44) : '') +
       '<span class="cuerpo"><span class="nombre">' + esc((ag ? ag.nombre : 'Síntoma') + (p ? ' · ' + p.nombre : '')) + '</span>' +
       '<span class="meta">' + (u ? SEVERIDAD[u.payload.severidad] + ' hace ' + difDias(u.fecha, hoy) + ' d' : 'sin observaciones') +
       '</span></span></button></div>';
