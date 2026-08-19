@@ -24,6 +24,9 @@
   --agua:#6fb3c9;
   --seco:#d9a441;
   --alarma:#c4643c;
+  --tierra:#c08457;
+  --flor:#cf8fb4;
+  --fruto:#e07a45;
   --r:10px;
   --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
   --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
@@ -177,6 +180,49 @@ label.check input{width:22px;height:22px;accent-color:var(--savia)}
 }
 .hoja h3{margin-bottom:14px;font-size:1.1rem}
 
+/* ── PLEGABLES Y GRUPOS DE TEMPORADA ── */
+.plegable{
+  width:100%;display:flex;align-items:center;gap:10px;min-height:48px;
+  background:var(--superficie);border:1px solid var(--borde);border-radius:var(--r);
+  padding:10px 14px;text-align:left;color:var(--tenue);
+  font-size:.78rem;text-transform:uppercase;letter-spacing:.12em;font-weight:600;
+}
+.plegable .crece{flex:1}
+.plegable .pie{text-transform:none;letter-spacing:0}
+.flecha{transition:transform .15s ease}
+.flecha.abierta{transform:rotate(180deg)}
+.grupo{background:var(--superficie);border:1px solid var(--borde);border-radius:var(--r);overflow:hidden}
+.grupo.apagado{opacity:.55}
+.grupo-cab{width:100%;display:flex;align-items:center;gap:10px;min-height:60px;
+  padding:10px 14px;background:none;border:0;text-align:left;color:var(--texto)}
+.grupo-cab .crece{flex:1;min-width:0}
+.grupo-cab .flecha{color:var(--tenue)}
+.grupo-cuerpo{padding:0 14px 14px;border-top:1px solid var(--borde)}
+.punto{width:10px;height:10px;border-radius:50%;flex:0 0 10px}
+
+/* ── BANDA ANUAL ── */
+.banda{padding:12px 10px}
+.banda-meses,.banda-fila{display:flex;align-items:center;gap:8px}
+.banda-meses{margin:0 0 6px;color:var(--tenue);font-size:.68rem;font-family:var(--mono)}
+.banda-meses b{flex:1;text-align:center;font-weight:400}
+.banda-meses b.mes-hoy{color:var(--texto);font-weight:700}
+.banda-fila{margin-bottom:5px}
+.banda-et{flex:0 0 86px;font-size:.68rem;color:var(--tenue);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.banda-celdas{flex:1;display:flex;gap:1px}
+.banda-celdas i{flex:1;height:12px;background:#1c2318;border-radius:2px}
+.banda-celdas i.ahora{box-shadow:inset 0 0 0 1px var(--texto)}
+
+/* ── AGENDA ── */
+.dia{margin-bottom:14px}
+.dia-cab{width:100%;display:flex;align-items:center;gap:8px;background:none;border:0;
+  padding:6px 2px;color:var(--tenue);font-size:.8rem;text-align:left}
+.dia-cab .crece{flex:1}
+.dia-cab .mas{font-size:1.2rem;color:var(--savia)}
+.hueco{display:block;width:100%;background:none;border:0;border-top:1px dashed var(--borde);
+  color:var(--tenue);font-size:.75rem;padding:10px 0;margin:6px 0}
+.rejilla{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.rejilla .btn{width:100%}
+
 /* ── HISTÓRICO ── */
 .evento{display:flex;gap:12px;padding:11px 0;border-bottom:1px solid var(--borde)}
 .evento:last-child{border-bottom:0}
@@ -216,7 +262,7 @@ label.check input{width:22px;height:22px;accent-color:var(--savia)}
    ═══════════════════════════════════════════════════════════════════ */
 
 const APP = 'diario-jardineria';
-const ESQUEMA = 1;               // versión del formato del zip
+const ESQUEMA = 2;               // versión del formato del zip (2: taxones y tareas)
 const DB_NOMBRE = 'jardin';
 const DB_VERSION = 1;
 const MAX_DIAS_MOTOR = 120;      // tope de iteraciones del bucle día a día
@@ -233,9 +279,213 @@ const TIPOS_EVENTO = {
   lluvia:     'Lluvia',
   siembra:    'Siembra',
   trasplante: 'Trasplante',
+  poda:       'Poda',
+  abonado:    'Abonado',
+  cosecha:    'Cosecha',
   baja:       'Baja',
   nota:       'Nota',
 };
+
+/* Clases de ventana fenológica. `prescriptiva` decide si genera pendiente;
+   `evento` es el tipo de evento del log que la cierra. */
+const CLASES_VENTANA = {
+  siembra_semillero: { etiqueta:'Siembra en semillero', verbo:'Sembrar en semillero', prescriptiva:true,  evento:'siembra',    color:'var(--savia)' },
+  siembra_directa:   { etiqueta:'Siembra directa',      verbo:'Sembrar',              prescriptiva:true,  evento:'siembra',    color:'var(--savia)' },
+  trasplante:        { etiqueta:'Trasplante',           verbo:'Trasplantar',          prescriptiva:true,  evento:'trasplante', color:'var(--agua)' },
+  poda:              { etiqueta:'Poda',                 verbo:'Podar',                prescriptiva:true,  evento:'poda',       color:'var(--seco)' },
+  abonado:           { etiqueta:'Abonado',              verbo:'Abonar',               prescriptiva:true,  evento:'abonado',    color:'var(--tierra)' },
+  floracion:         { etiqueta:'Floración',            prescriptiva:false, color:'var(--flor)' },
+  produccion:        { etiqueta:'Producción',           prescriptiva:false, evento:'cosecha', color:'var(--fruto)' },
+  reposo:            { etiqueta:'Reposo',               prescriptiva:false, color:'var(--tenue)' },
+};
+
+const DIAS_SILENCIO = 14;        // una ventana abierta más de dos semanas deja de ser novedad
+
+/* Catálogo semilla: punto de partida para clima mediterráneo de costa, NO una
+   fuente de autoridad. Se importa una vez desde Ajustes, nunca pisa lo tuyo, y
+   se corrige con la experiencia del jardín.
+   Notación: [clase, mesDesde, quincenaDesde, mesHasta, quincenaHasta, cadaDias|0, nota] */
+const SEMILLA_TAXONES = [
+  ['Tomate', [
+    ['siembra_semillero',1,1,2,2,0,'protegido de heladas tardías'],
+    ['trasplante',3,2,5,1,0,''],
+    ['abonado',5,1,9,2,15,''],
+    ['produccion',6,1,10,2,0,''],
+  ]],
+  ['Pimiento', [
+    ['siembra_semillero',1,2,2,2,0,'necesita calor para germinar'],
+    ['trasplante',4,1,5,1,0,''],
+    ['abonado',6,1,9,1,15,''],
+    ['produccion',7,1,10,2,0,''],
+  ]],
+  ['Berenjena', [
+    ['siembra_semillero',1,2,2,2,0,''],
+    ['trasplante',4,1,5,2,0,''],
+    ['produccion',7,1,10,1,0,''],
+  ]],
+  ['Calabacín', [
+    ['siembra_directa',3,2,6,2,30,'siembras escalonadas para alargar la cosecha'],
+    ['produccion',6,1,10,1,0,''],
+  ]],
+  ['Pepino', [
+    ['siembra_directa',4,1,6,1,30,''],
+    ['produccion',6,2,9,2,0,''],
+  ]],
+  ['Judía verde', [
+    ['siembra_directa',3,2,8,1,21,'escalonar cada tres semanas'],
+    ['produccion',6,1,10,2,0,''],
+  ]],
+  ['Lechuga', [
+    ['siembra_semillero',1,2,5,1,21,'escalonar; en verano se espiga'],
+    ['siembra_directa',9,1,11,2,21,''],
+    ['produccion',3,1,6,2,0,''],
+  ]],
+  ['Acelga', [
+    ['siembra_directa',2,1,5,1,30,''],
+    ['siembra_directa',9,1,10,2,30,''],
+    ['produccion',5,1,12,2,0,''],
+  ]],
+  ['Espinaca', [
+    ['siembra_directa',9,2,11,2,21,'cultivo de otoño-invierno'],
+    ['produccion',11,1,3,1,0,''],
+  ]],
+  ['Zanahoria', [
+    ['siembra_directa',2,1,4,2,30,''],
+    ['siembra_directa',9,1,10,2,30,''],
+    ['produccion',5,1,7,2,0,''],
+  ]],
+  ['Rábano', [
+    ['siembra_directa',9,1,4,2,14,'muy rápido; escalonar mucho'],
+    ['produccion',10,1,5,2,0,''],
+  ]],
+  ['Cebolla', [
+    ['siembra_semillero',8,2,10,2,0,''],
+    ['trasplante',11,1,1,2,0,''],
+    ['produccion',5,1,7,1,0,''],
+  ]],
+  ['Ajo', [
+    ['siembra_directa',10,1,12,1,0,'diente hacia arriba'],
+    ['produccion',6,1,7,1,0,''],
+  ]],
+  ['Puerro', [
+    ['siembra_semillero',2,1,4,2,0,''],
+    ['trasplante',5,1,7,1,0,''],
+    ['produccion',10,1,2,2,0,''],
+  ]],
+  ['Guisante', [
+    ['siembra_directa',10,1,1,2,30,''],
+    ['produccion',2,1,5,1,0,''],
+  ]],
+  ['Haba', [
+    ['siembra_directa',10,1,12,1,0,''],
+    ['produccion',2,1,5,1,0,''],
+  ]],
+  ['Patata', [
+    ['siembra_directa',1,2,3,1,0,''],
+    ['produccion',5,1,7,1,0,''],
+  ]],
+  ['Fresa', [
+    ['trasplante',9,1,11,2,0,'renovar las matas cada 2-3 años'],
+    ['abonado',2,1,5,2,21,''],
+    ['produccion',3,1,6,1,0,''],
+  ]],
+  ['Limonero', [
+    ['poda',2,2,3,2,0,'tras la cosecha y sin riesgo de heladas'],
+    ['abonado',2,1,9,2,30,''],
+    ['floracion',3,1,5,1,0,'refloración en septiembre'],
+    ['produccion',11,1,3,2,0,''],
+  ]],
+  ['Naranjo', [
+    ['poda',3,1,4,1,0,'tras la cosecha'],
+    ['abonado',2,1,9,2,30,''],
+    ['floracion',4,1,5,1,0,''],
+    ['produccion',12,1,3,2,0,''],
+  ]],
+  ['Olivo', [
+    ['poda',2,1,3,2,0,'antes de la brotación'],
+    ['floracion',5,1,5,2,0,''],
+    ['produccion',11,1,12,2,0,''],
+  ]],
+  ['Higuera', [
+    ['poda',1,1,2,2,0,'en reposo vegetativo'],
+    ['produccion',6,2,9,1,0,'brevas y luego higos'],
+  ]],
+  ['Parra', [
+    ['poda',12,1,1,2,0,'poda de invierno, en reposo'],
+    ['floracion',5,1,5,2,0,''],
+    ['produccion',8,1,10,1,0,''],
+  ]],
+  ['Aguacate', [
+    ['poda',3,2,4,2,0,'ligera; teme el sol directo en la madera'],
+    ['abonado',3,1,9,1,30,''],
+    ['floracion',3,1,5,2,0,''],
+    ['produccion',11,1,4,2,0,''],
+  ]],
+  ['Albahaca', [
+    ['siembra_semillero',3,1,5,2,21,''],
+    ['poda',5,1,9,2,14,'pinzar las flores para que siga dando hoja'],
+    ['produccion',6,1,10,1,0,''],
+  ]],
+  ['Perejil', [
+    ['siembra_directa',2,1,5,1,30,''],
+    ['siembra_directa',9,1,10,1,30,''],
+    ['produccion',4,1,12,2,0,''],
+  ]],
+  ['Romero', [
+    ['poda',3,2,4,2,0,'tras la floración, sin llegar a madera vieja'],
+    ['floracion',2,1,5,1,0,''],
+  ]],
+  ['Tomillo', [
+    ['poda',4,1,5,2,0,'tras la floración'],
+    ['floracion',4,1,6,1,0,''],
+  ]],
+  ['Hierbabuena', [
+    ['poda',3,1,9,2,30,'cortar a menudo para que no se ahíle'],
+    ['reposo',12,1,2,2,0,''],
+  ]],
+  ['Lavanda', [
+    ['poda',8,2,9,2,0,'tras la floración, sin tocar madera vieja'],
+    ['floracion',5,1,7,2,0,''],
+  ]],
+  ['Rosal', [
+    ['poda',12,2,2,1,0,'poda de invierno, en reposo'],
+    ['abonado',3,1,9,1,30,''],
+    ['floracion',4,1,6,2,0,'refloración en otoño'],
+  ]],
+  ['Buganvilla', [
+    ['poda',2,2,3,2,0,'antes de la brotación'],
+    ['floracion',5,1,10,2,0,''],
+  ]],
+  ['Jazmín', [
+    ['poda',2,2,3,2,0,''],
+    ['floracion',5,1,9,2,0,''],
+  ]],
+  ['Geranio', [
+    ['poda',2,1,3,1,0,'aclarar tallos secos al final del invierno'],
+    ['abonado',4,1,9,2,21,''],
+    ['floracion',3,1,11,1,0,''],
+  ]],
+  ['Monstera', [
+    ['trasplante',3,1,5,2,0,'cada 2 años, o cuando saque raíces por el drenaje'],
+    ['abonado',4,1,9,2,21,''],
+    ['reposo',11,1,2,2,0,'sin abono y con menos riego'],
+  ]],
+  ['Potos', [
+    ['trasplante',3,1,5,2,0,''],
+    ['abonado',4,1,9,2,30,''],
+    ['reposo',11,1,2,2,0,''],
+  ]],
+  ['Sansevieria', [
+    ['trasplante',3,2,5,2,0,'cada 3 años; le gusta ir justa de maceta'],
+    ['abonado',5,1,8,2,45,''],
+    ['reposo',11,1,2,2,0,'aguanta semanas sin agua'],
+  ]],
+  ['Ficus', [
+    ['trasplante',3,1,4,2,0,''],
+    ['abonado',4,1,9,1,30,''],
+    ['reposo',12,1,2,2,0,''],
+  ]],
+];
 
 const TABLAS = ['zonas','taxones','agentes','productos','plantas','episodios','eventos','tareas','media'];
 const MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto',
@@ -334,16 +584,19 @@ function guardarVarios(n, arr){
    escribe siempre a IndexedDB (write-through). Render sin await.
    ═══════════════════════════════════════════════════════════════════ */
 
-const estado = { zonas:[], plantas:[], eventos:[], meta:{} };
+const estado = { zonas:[], plantas:[], eventos:[], taxones:[], tareas:[], meta:{} };
 let ctx = null;                 // índices del motor, recalculados al escribir
 
 async function cargarEstado(){
-  const [zonas, plantas, eventos, meta] = await Promise.all([
-    leerTodo('zonas'), leerTodo('plantas'), leerTodo('eventos'), leerTodo('meta')
+  const [zonas, plantas, eventos, taxones, tareas, meta] = await Promise.all([
+    leerTodo('zonas'), leerTodo('plantas'), leerTodo('eventos'),
+    leerTodo('taxones'), leerTodo('tareas'), leerTodo('meta')
   ]);
   estado.zonas = zonas;
   estado.plantas = plantas;
   estado.eventos = eventos;
+  estado.taxones = taxones;
+  estado.tareas = tareas;
   estado.meta = Object.fromEntries(meta.map(m => [m.k, m.v]));
   reindexar();
 }
@@ -368,7 +621,7 @@ async function editarZona(z){
 }
 async function nuevaPlanta(d){
   const p = {
-    id: uid(), nombre: d.nombre, taxon_id: null, especie: d.especie || '',
+    id: uid(), nombre: d.nombre, taxon_id: d.taxon_id || null, especie: d.especie || '',
     zona_id: d.zona_id, perfil_hidrico: d.perfil_hidrico,
     litros: d.litros ?? null, sustrato: d.sustrato || '',
     comestible: !!d.comestible,
@@ -387,6 +640,34 @@ async function guardarPlanta(p){
   if (i >= 0) estado.plantas[i] = p; else estado.plantas.push(p);
   await guardar('plantas', p);
   reindexar();
+}
+
+const taxonPorId = id => estado.taxones.find(t => t.id === id) || null;
+const taxonDe = p => (p && p.taxon_id) ? taxonPorId(p.taxon_id) : null;
+
+async function guardarTaxon(t){
+  const i = estado.taxones.findIndex(x => x.id === t.id);
+  if (i >= 0) estado.taxones[i] = t; else estado.taxones.push(t);
+  await guardar('taxones', t);
+}
+async function borrarTaxon(id){
+  estado.taxones = estado.taxones.filter(t => t.id !== id);
+  await borrar('taxones', id);
+}
+
+async function nuevaTarea({ texto, fecha_prevista, alcance }){
+  const t = {
+    id: uid(), alcance, fecha_prevista, clase:'libre',
+    episodio_id: null, texto, hecha_evento_id: null, descartada: false,
+  };
+  estado.tareas.push(t);
+  await guardar('tareas', t);
+  return t;
+}
+async function guardarTarea(t){
+  const i = estado.tareas.findIndex(x => x.id === t.id);
+  if (i >= 0) estado.tareas[i] = t; else estado.tareas.push(t);
+  await guardar('tareas', t);
 }
 
 /* Un evento nunca duplica propiedades de la planta: tipo, fecha, cuánto y nota. */
@@ -516,6 +797,128 @@ function saldoDias(planta, zona, hoy){
   return { saldo, intervalo, techo, ancla, expuesta };
 }
 /* MOTOR_FIN */
+
+/* ═══════════════════════════════════════════════════════════════════
+   FENOLOGÍA — las ventanas no se almacenan: se derivan del log, igual
+   que los riegos. Cero filas de Tarea, cero duplicados.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* FENO_INICIO */
+/* Todo se compara en índices de quincena 0..23 (2 por mes). Nadie compara
+   meses a mano fuera de estas cuatro funciones: ahí es donde falla siempre. */
+const qDesde  = v => (v.desde.mes - 1) * 2 + (v.desde.quincena === 2 ? 1 : 0);
+const qHasta  = v => (v.hasta.mes - 1) * 2 + (v.hasta.quincena === 1 ? 0 : 1);
+const qDeFecha = f => (Number(f.slice(5,7)) - 1) * 2 + (Number(f.slice(8,10)) >= 16 ? 1 : 0);
+
+function ventanaContiene(v, fecha){
+  const q = qDeFecha(fecha), a = qDesde(v), b = qHasta(v);
+  return a <= b ? (q >= a && q <= b) : (q >= a || q <= b);   // a > b ⇒ envuelve el cambio de año
+}
+function qDentro(a, b, i){ return a <= b ? (i >= a && i <= b) : (i >= a || i <= b); }
+
+const finDeMes = (ano, mes) => new Date(ano, mes, 0).getDate();
+const fechaDe = (a, m, d) => a + '-' + String(m).padStart(2,'0') + '-' + String(d).padStart(2,'0');
+
+/* La temporada de una ventana que envuelve NO es el año natural: la poda de
+   noviembre a febrero es una sola temporada, y el evento de enero la cierra. */
+function rangoTemporada(v, fecha){
+  const a = qDesde(v), b = qHasta(v), q = qDeFecha(fecha);
+  let anoIni = Number(fecha.slice(0,4));
+  if (a > b && q <= b) anoIni -= 1;
+  const anoFin = a <= b ? anoIni : anoIni + 1;
+  const mesA = Math.floor(a / 2) + 1, diaA = (a % 2 === 0) ? 1 : 16;
+  const mesB = Math.floor(b / 2) + 1, diaB = (b % 2 === 0) ? 15 : finDeMes(anoFin, mesB);
+  return { inicio: fechaDe(anoIni, mesA, diaA), fin: fechaDe(anoFin, mesB, diaB) };
+}
+
+function textoVentana(v){
+  const nom = m => MESES[m - 1];
+  const dq = v.desde.quincena, hq = v.hasta.quincena;
+  const dTrivial = !dq || dq === 1;      // empezar en la 1ª quincena = empezar el mes
+  const hTrivial = !hq || hq === 2;      // acabar en la 2ª = acabar el mes
+  let txt;
+  if (v.desde.mes === v.hasta.mes && dTrivial && hTrivial) txt = nom(v.desde.mes);
+  else if (v.desde.mes === v.hasta.mes && dq === hq) txt = (dq === 1 ? '1ª' : '2ª') + ' quincena de ' + nom(v.desde.mes);
+  else txt = (dTrivial ? nom(v.desde.mes) : '2ª quincena de ' + nom(v.desde.mes)) + ' → ' +
+             (hTrivial ? nom(v.hasta.mes) : '1ª quincena de ' + nom(v.hasta.mes));
+  return txt + (v.repetible && v.repetible.cada_dias ? ' · cada ' + v.repetible.cada_dias + ' d' : '');
+}
+
+/* Pendiente = hoy cae dentro de la ventana y no hay evento de esa clase en el
+   log dentro de la temporada. Con `repetible`, reabre cada_dias después. */
+function ventanasPendientes(planta, hoy){
+  const t = taxonDe(planta);
+  if (!t) return [];
+  const salida = [];
+  for (const v of (t.ventanas || [])){
+    const meta = CLASES_VENTANA[v.clase];
+    if (!meta || !meta.prescriptiva || !meta.evento) continue;
+    if (!ventanaContiene(v, hoy)) continue;
+    const temp = rangoTemporada(v, hoy);
+    const hechos = estado.eventos
+      .filter(e => e.alcance.tipo === 'planta' && e.alcance.id === planta.id &&
+                   e.payload.tipo === meta.evento && e.fecha >= temp.inicio && e.fecha <= hoy)
+      .map(e => e.fecha).sort();
+    const ultimo = hechos.length ? hechos[hechos.length - 1] : null;
+    const cada = v.repetible && v.repetible.cada_dias ? v.repetible.cada_dias : 0;
+
+    let pendiente, desde;
+    if (cada){
+      pendiente = !ultimo || difDias(ultimo, hoy) >= cada;
+      desde = ultimo ? sumarDias(ultimo, cada) : temp.inicio;
+    } else {
+      pendiente = !ultimo;
+      desde = temp.inicio;
+    }
+    if (!pendiente) continue;
+    const dias = Math.max(0, difDias(desde, hoy));
+    salida.push({ taxon:t, ventana:v, meta, temporada:temp, dias, silenciada: dias > DIAS_SILENCIO });
+  }
+  return salida;
+}
+
+/* Agrupado por taxón + clase, no por planta: "Podar tomates (4)". */
+function gruposTemporada(hoy){
+  const mapa = new Map();
+  for (const p of estado.plantas){
+    if (!p.activa) continue;
+    for (const w of ventanasPendientes(p, hoy)){
+      const k = w.taxon.id + '|' + w.ventana.clase + '|' + w.ventana.desde.mes;
+      if (!mapa.has(k))
+        mapa.set(k, { clave:k, taxon:w.taxon, ventana:w.ventana, meta:w.meta,
+                      dias:w.dias, silenciada:w.silenciada, plantas:[] });
+      const g = mapa.get(k);
+      g.plantas.push(p);
+      g.dias = Math.min(g.dias, w.dias);
+      g.silenciada = g.silenciada && w.silenciada;
+    }
+  }
+  return [...mapa.values()].sort((a,b) =>
+    (a.silenciada === b.silenciada ? 0 : a.silenciada ? 1 : -1) || a.dias - b.dias);
+}
+
+/* Banda anual: qué clases de ventana tiene abierto el jardín en cada quincena. */
+function bandaAnual(){
+  const usados = new Set(estado.plantas.filter(p => p.activa && p.taxon_id).map(p => p.taxon_id));
+  const filas = new Map();
+  for (const t of estado.taxones){
+    if (!usados.has(t.id)) continue;
+    for (const v of (t.ventanas || [])){
+      if (!CLASES_VENTANA[v.clase]) continue;
+      if (!filas.has(v.clase)) filas.set(v.clase, new Set());
+      const s = filas.get(v.clase), a = qDesde(v), b = qHasta(v);
+      for (let i = 0; i < 24; i++) if (qDentro(a, b, i)) s.add(i);
+    }
+  }
+  return filas;
+}
+
+function tareasPendientes(hasta){
+  return estado.tareas
+    .filter(t => !t.hecha_evento_id && !t.descartada && t.fecha_prevista <= hasta)
+    .sort((a,b) => a.fecha_prevista.localeCompare(b.fecha_prevista));
+}
+/* FENO_FIN */
 
 function estadoDe(saldo){
   if (saldo <= -1) return 'deuda';
@@ -731,18 +1134,21 @@ let seleccion = new Set();
 let seleccionManual = false;   // el usuario ya ha tocado la lista: no volver a preseleccionar
 let fechaRegistro = hoyISO();
 let ultimoLote = null;
+let temporadaAbierta = false;
+let grupoAbierto = null;
+let mesBanda = null;
 
 function icono(d){ return '<svg viewBox="0 0 24 24">' + d + '</svg>'; }
 const ICONOS = {
   hoy:'<path d="M12 21c-4 0-7-3-7-7 0-5 7-11 7-11s7 6 7 11c0 4-3 7-7 7z"/><path d="M12 21V9"/>',
   plantas:'<path d="M4 20h16"/><path d="M12 20V8"/><path d="M12 12c-4 0-6-2-6-6 4 0 6 2 6 6z"/><path d="M12 14c4 0 6-2 6-6-4 0-6 2-6 6z"/>',
-  registro:'<path d="M5 4h14v16H5z"/><path d="M8 9h8"/><path d="M8 13h8"/><path d="M8 17h5"/>',
+  agenda:'<path d="M4 6h16v14H4z"/><path d="M4 10h16"/><path d="M9 3v4M15 3v4"/><path d="M8 14h3"/>',
   ajustes:'<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/>',
   check:'<path d="M4 12l5 5L20 6"/>',
 };
 
 function pintarTabs(activa){
-  const items = [['hoy','Hoy'],['plantas','Plantas'],['registro','Registro'],['ajustes','Ajustes']];
+  const items = [['hoy','Hoy'],['plantas','Plantas'],['agenda','Agenda'],['ajustes','Ajustes']];
   $('#tabs').innerHTML = items.map(([id,txt]) =>
     '<a href="#/' + id + '" class="' + (activa === id ? 'on' : '') + '">' +
     icono(ICONOS[id]) + '<span>' + txt + '</span></a>').join('');
@@ -837,6 +1243,10 @@ function camposPlanta(p){
   const zonas = estado.zonas.map(z => [z.id, z.nombre]);
   return [
     { k:'nombre', etiqueta:'Nombre', valor:p ? p.nombre : '', ayuda:'limonero del bancal 2' },
+    { k:'taxon_id', etiqueta:'Taxón (aporta la fenología)', tipo:'select',
+      opciones:[['','— sin taxón —']].concat(estado.taxones.slice()
+        .sort((a,b) => a.nombre.localeCompare(b.nombre,'es')).map(t => [t.id, t.nombre])),
+      valor:p ? (p.taxon_id || '') : '' },
     { k:'especie', etiqueta:'Especie (opcional)', valor:p ? p.especie : '' },
     { k:'zona_id', etiqueta:'Zona', tipo:'select', opciones:zonas, valor:p ? p.zona_id : (zonas[0] || [''])[0] },
     { k:'perfil_hidrico', etiqueta:'Perfil hídrico', tipo:'select',
@@ -866,6 +1276,7 @@ async function pedirPlanta(p){
   d.intervalo_calido_dias = Math.max(1, d.intervalo_calido_dias || 3);
   d.intervalo_frio_dias = Math.max(1, d.intervalo_frio_dias || 7);
   d.mes_corte_calido = Number(d.mes_corte_calido);
+  d.taxon_id = d.taxon_id || null;
   if (p){
     await guardarPlanta(Object.assign({}, p, d));
     return p.id;
@@ -927,11 +1338,75 @@ function vistaHoy(){
 
   return cabecera +
     bloque('Toca regar · ' + tocan.length, tocan) +
+    vistaTareas() +
+    vistaTemporada() +
     bloque('Con reserva · ' + resto.length, resto) +
     '<section class="bloque"><div class="fila-btns">' +
       '<button class="btn" data-a="lluvia">Ha llovido</button>' +
+      '<button class="btn" data-a="tarea-nueva">Nueva tarea</button>' +
       '<button class="btn" data-a="planta-nueva">Nueva planta</button>' +
     '</div></section>';
+}
+
+function vistaTareas(){
+  const ts = tareasPendientes(fechaRegistro);
+  if (!ts.length) return '';
+  const donde = a => a.tipo === 'global' ? 'todo el jardín'
+    : a.tipo === 'zona' ? ((estado.zonas.find(z => z.id === a.id) || {nombre:'zona'}).nombre)
+    : ((plantaPorId(a.id) || {nombre:'planta'}).nombre);
+  return '<section class="bloque"><h2>Tareas · ' + ts.length + '</h2><div class="lista">' +
+    ts.map(t => {
+      const tarde = difDias(t.fecha_prevista, fechaRegistro);
+      return '<div class="fila"><div class="toggle" style="cursor:default">' +
+        '<span class="cuerpo"><span class="nombre">' + esc(t.texto) + '</span>' +
+        '<span class="meta">' + esc(donde(t.alcance)) + ' · ' +
+        (tarde > 0 ? 'hace ' + tarde + ' d' : fechaCorta(t.fecha_prevista)) + '</span></span></div>' +
+        '<button class="abrir" data-a="tarea-hecha" data-id="' + t.id + '" aria-label="Hecha">✓</button>' +
+        '<button class="abrir" data-a="tarea-fuera" data-id="' + t.id + '" aria-label="Descartar">✕</button>' +
+      '</div>';
+    }).join('') + '</div></section>';
+}
+
+/* Temporada: bloque aparte, colapsado y agrupado. Nunca compite con los riegos. */
+function vistaTemporada(){
+  const grupos = gruposTemporada(fechaRegistro);
+  if (!grupos.length) return '';
+  const nuevas = grupos.filter(g => !g.silenciada).length;
+  const viejas = grupos.length - nuevas;
+  const titulo = 'De temporada · ' + nuevas + (viejas ? ' <span class="pie">+' + viejas + ' antiguas</span>' : '');
+
+  if (!temporadaAbierta)
+    return '<section class="bloque"><button class="plegable" data-a="temporada">' +
+      '<span class="crece">' + titulo + '</span><span class="flecha">▾</span></button></section>';
+
+  return '<section class="bloque"><button class="plegable" data-a="temporada">' +
+    '<span class="crece">' + titulo + '</span><span class="flecha abierta">▾</span></button>' +
+    '<div class="lista" style="margin-top:8px">' + grupos.map(grupoTemporada).join('') + '</div></section>';
+}
+
+function grupoTemporada(g){
+  const abierto = grupoAbierto === g.clave;
+  const cab = '<button class="grupo-cab" data-a="grupo" data-k="' + esc(g.clave) + '">' +
+    '<span class="punto" style="background:' + g.meta.color + '"></span>' +
+    '<span class="crece"><span class="nombre">' + esc(g.meta.verbo + ' ' + g.taxon.nombre.toLowerCase()) +
+    ' (' + g.plantas.length + ')</span>' +
+    '<span class="meta">' + esc(textoVentana(g.ventana)) +
+    (g.dias > 0 ? ' · abierta hace ' + g.dias + ' d' : ' · desde hoy') + '</span></span>' +
+    '<span class="flecha' + (abierto ? ' abierta' : '') + '">▾</span></button>';
+
+  if (!abierto) return '<div class="grupo' + (g.silenciada ? ' apagado' : '') + '">' + cab + '</div>';
+
+  const filas = g.plantas.map(p =>
+    '<div class="dato"><span style="color:var(--texto)">' + esc(p.nombre) + '</span>' +
+    '<button class="btn fantasma" style="min-height:34px;padding:4px 12px" data-a="temp-hecho" data-k="' +
+    esc(g.clave) + '" data-id="' + p.id + '">Hecho</button></div>').join('');
+
+  return '<div class="grupo' + (g.silenciada ? ' apagado' : '') + '">' + cab +
+    '<div class="grupo-cuerpo">' + filas +
+    (g.ventana.nota ? '<p class="pie" style="margin:8px 0 0">' + esc(g.ventana.nota) + '</p>' : '') +
+    (g.plantas.length > 1 ? '<button class="btn ancho" style="margin-top:10px" data-a="temp-hecho" data-k="' +
+      esc(g.clave) + '">' + esc(g.meta.verbo) + ' las ' + g.plantas.length + '</button>' : '') +
+    '</div></div>';
 }
 
 function filaPlanta(f){
@@ -1101,12 +1576,15 @@ function textoEvento(e){
     case 'trasplante': return 'A ' + (PERFILES[p.perfil_nuevo] ? PERFILES[p.perfil_nuevo].etiqueta.toLowerCase() : 'otro sitio') +
                               (p.litros_nuevo ? ' · ' + p.litros_nuevo + ' L' : '') +
                               (p.sustrato_nuevo ? ' · ' + p.sustrato_nuevo : '');
+    case 'poda':       return 'Poda ' + (p.clase || '') + (p.intensidad ? ' · ' + p.intensidad : '');
+    case 'abonado':    return 'Abonada' + (p.dosis ? ' · ' + p.dosis : '');
+    case 'cosecha':    return p.cantidad != null ? p.cantidad + ' ' + (p.unidad || '') : 'Cosecha';
     case 'baja':       return p.causa || 'Sin causa anotada';
     default:           return '';
   }
 }
 
-function listaEventos(eventos, conAlcance){
+function listaEventos(eventos, conAlcance, conFecha){
   if (!eventos.length) return '<div class="vacio">Sin eventos todavía.</div>';
   return eventos.map(e => {
     const donde = !conAlcance ? '' :
@@ -1117,7 +1595,7 @@ function listaEventos(eventos, conAlcance){
       '<div class="tipo t-' + e.payload.tipo + '">' + (TIPOS_EVENTO[e.payload.tipo] || e.payload.tipo) + '</div>' +
       '<div class="txt"><div>' + esc(textoEvento(e) || e.nota || '—') + (conAlcance ? ' <span class="pie">· ' + esc(donde) + '</span>' : '') + '</div>' +
       (e.nota && textoEvento(e) ? '<div class="pie">' + esc(e.nota) + '</div>' : '') +
-      '<div class="fecha">' + fechaCorta(e.fecha) + '</div></div>' +
+      (conFecha === false ? '' : '<div class="fecha">' + fechaCorta(e.fecha) + '</div>') + '</div>' +
       '<button class="quitar" data-a="ev-fecha" data-id="' + e.id + '" aria-label="Cambiar la fecha">' +
         icono('<path d="M5 5h14v15H5z"/><path d="M5 10h14M9 3v4M15 3v4"/>') + '</button>' +
       '<button class="quitar" data-a="ev-borrar" data-id="' + e.id + '" aria-label="Borrar">✕</button>' +
@@ -1143,10 +1621,13 @@ function vistaFicha(id){
     '<div class="fila-btns" style="margin-top:14px">' +
       '<button class="btn agua" data-a="regar-una" data-id="' + p.id + '">Regar hoy</button>' +
       '<button class="btn" data-a="nota" data-id="' + p.id + '">Anotar</button>' +
+      '<button class="btn" data-a="evento-otro" data-id="' + p.id + '">Otro evento…</button>' +
     '</div></div></section>' +
+    fichaTemporada(p) +
 
     '<section class="bloque"><h2>Ficha</h2><div class="tarjeta">' +
       dato('Zona', z ? z.nombre + ' · ' + z.exposicion : 'sin zona') +
+      dato('Taxón', taxonDe(p) ? taxonDe(p).nombre : '—') +
       dato('Especie', p.especie || '—') +
       dato('Perfil hídrico', PERFILES[p.perfil_hidrico].etiqueta) +
       dato('Riego', 'cada ' + p.intervalo_calido_dias + ' d en cálido · cada ' + p.intervalo_frio_dias + ' d en frío') +
@@ -1162,6 +1643,7 @@ function vistaFicha(id){
       '<button class="btn" data-a="siembra" data-id="' + p.id + '">Siembra</button>' +
     '</div>' +
     '<div class="fila-btns" style="margin-top:8px">' +
+      '<button class="btn" data-a="tarea-nueva" data-id="' + p.id + '">Nueva tarea</button>' +
       (p.activa
         ? '<button class="btn peligro" data-a="baja" data-id="' + p.id + '">Dar de baja</button>'
         : '<button class="btn" data-a="revivir" data-id="' + p.id + '">Reactivar</button>') +
@@ -1174,6 +1656,33 @@ function vistaFicha(id){
 
 function dato(k, v){
   return '<div class="dato"><span>' + esc(k) + '</span><span>' + esc(v) + '</span></div>';
+}
+
+function fichaTemporada(p){
+  const t = taxonDe(p);
+  if (!t) return '';
+  const hoy = hoyISO();
+  const pend = ventanasPendientes(p, hoy);
+  const activas = (t.ventanas || []).filter(v => ventanaContiene(v, hoy));
+  if (!activas.length && !pend.length) return '';
+  const clave = v => t.id + '|' + v.clase + '|' + v.desde.mes;
+  const esPendiente = v => pend.some(w => w.ventana === v);
+
+  return '<section class="bloque"><h2>Temporada</h2><div class="tarjeta">' +
+    activas.map(v => {
+      const meta = CLASES_VENTANA[v.clase];
+      return '<div class="dato"><span style="color:var(--texto)">' +
+        '<span class="punto" style="background:' + meta.color + ';display:inline-block;margin-right:8px"></span>' +
+        esc(meta.etiqueta) + '<br><span class="pie">' + esc(textoVentana(v)) +
+        (v.nota ? ' · ' + esc(v.nota) : '') + '</span></span>' +
+        (esPendiente(v)
+          ? '<button class="btn fantasma" style="min-height:34px;padding:4px 12px" data-a="temp-hecho" data-k="' +
+            esc(clave(v)) + '" data-id="' + p.id + '">' + esc(meta.verbo) + '</button>'
+          : '<span class="pie">' + (meta.prescriptiva ? 'hecho' : 'en curso') + '</span>') +
+      '</div>';
+    }).join('') +
+    '</div><button class="btn ancho" style="margin-top:10px" data-a="taxon-ver" data-id="' + t.id +
+    '">Ver ficha de ' + esc(t.nombre) + '</button></section>';
 }
 
 async function accionesEvento(a, id){
@@ -1193,72 +1702,143 @@ async function accionesEvento(a, id){
   render();
 }
 
-async function pedirTrasplante(id){
-  const p = plantaPorId(id);
+/* Un solo formulario para todos los tipos de evento con alcance de planta.
+   Acepta varias plantas: los mismos valores para todas, con lote_id común. */
+async function pedirEvento(tipo, ids, fechaPre){
+  ids = [].concat(ids);
+  if (!ids.length) return false;
+  const p = ids.length === 1 ? plantaPorId(ids[0]) : null;
+  const varias = ids.length > 1;
+  let campos = [], extra = '', titulo = TIPOS_EVENTO[tipo] || 'Evento';
+
+  switch (tipo){
+    case 'riego':
+      campos = [{ k:'litros', etiqueta:'Litros (opcional)', tipo:'numero', valor:null }];
+      break;
+    case 'poda':
+      campos = [
+        { k:'clase', etiqueta:'Tipo de poda', tipo:'select', valor:'mantenimiento',
+          opciones:[['mantenimiento','Mantenimiento'],['formacion','Formación'],['sanitaria','Sanitaria'],['pinzado','Pinzado']] },
+        { k:'intensidad', etiqueta:'Intensidad', tipo:'select', valor:'ligera',
+          opciones:[['ligera','Ligera'],['media','Media'],['fuerte','Fuerte']] },
+      ];
+      break;
+    case 'abonado':
+      campos = [{ k:'dosis', etiqueta:'Dosis', valor:'', ayuda:'10 ml/L, un puñado…' }];
+      extra = '<p class="pie">El producto se elige de un catálogo a partir de la Fase 3. Hasta entonces, apunta cuál en la nota.</p>';
+      break;
+    case 'cosecha':
+      campos = [
+        { k:'cantidad', etiqueta:'Cantidad', tipo:'numero', valor:null },
+        { k:'unidad', etiqueta:'Unidad', tipo:'select', valor:'g',
+          opciones:[['g','gramos'],['kg','kilos'],['ud','unidades']] },
+      ];
+      break;
+    case 'siembra':
+      campos = [{ k:'origen', etiqueta:'Origen', tipo:'select', valor:'semilla',
+        opciones:[['semilla','Semilla'],['esqueje','Esqueje'],['plantel','Plantel'],['compra','Compra']] }];
+      break;
+    case 'trasplante':
+      campos = [
+        { k:'perfil_nuevo', etiqueta:'Nuevo perfil hídrico', tipo:'select',
+          opciones:Object.entries(PERFILES).map(([k,v]) => [k, v.etiqueta]),
+          valor:p ? p.perfil_hidrico : 'maceta_grande' },
+        { k:'litros_nuevo', etiqueta:'Litros', tipo:'numero', valor:p ? p.litros : null },
+        { k:'sustrato_nuevo', etiqueta:'Sustrato', valor:p ? p.sustrato : '' },
+      ];
+      extra = '<p class="pie">El trasplante actualiza la ficha' + (varias ? ' de las ' + ids.length + ' plantas' : '') +
+              ': por eso se registra como evento y no se edita a mano.</p>';
+      break;
+    case 'baja':
+      campos = [{ k:'causa', etiqueta:'Causa', valor:'', ayuda:'se secó, se arrancó, se regaló' }];
+      extra = '<p class="pie">La planta desaparece de Hoy pero conserva todo su histórico.</p>';
+      break;
+    case 'nota':
+      campos = [{ k:'nota', etiqueta:'Nota', tipo:'textarea', valor:'' }];
+      break;
+    default:
+      return false;
+  }
+  campos.push({ k:'fecha', etiqueta:'Fecha', tipo:'fecha', valor: fechaPre || fechaRegistro });
+  if (tipo !== 'nota') campos.push({ k:'nota', etiqueta:'Nota', valor:'' });
+
   const d = await hoja({
-    titulo:'Trasplante',
-    aceptar:'Registrar',
+    titulo: titulo + (varias ? ' · ' + ids.length + ' plantas' : (p ? ' · ' + p.nombre : '')),
+    campos, extra, aceptar:'Registrar',
+  });
+  if (!d) return false;
+  if (tipo === 'nota' && !String(d.nota || '').trim()) return false;
+
+  const payload = { tipo };
+  if (tipo === 'riego' && d.litros) payload.litros = d.litros;
+  if (tipo === 'poda'){ payload.clase = d.clase; payload.intensidad = d.intensidad; }
+  if (tipo === 'abonado'){ payload.producto_id = null; if (d.dosis) payload.dosis = d.dosis; }
+  if (tipo === 'cosecha'){ if (d.cantidad != null) payload.cantidad = d.cantidad; payload.unidad = d.unidad; }
+  if (tipo === 'siembra') payload.origen = d.origen;
+  if (tipo === 'trasplante'){
+    payload.perfil_nuevo = d.perfil_nuevo;
+    payload.litros_nuevo = d.litros_nuevo;
+    payload.sustrato_nuevo = d.sustrato_nuevo;
+  }
+  if (tipo === 'baja') payload.causa = d.causa || '';
+
+  const lote = varias ? uid() : null;
+  for (const id of ids){
+    await nuevoEvento({ fecha:d.fecha, alcance:{ tipo:'planta', id },
+      payload: Object.assign({}, payload), nota:d.nota, lote_id:lote });
+  }
+  return true;
+}
+
+/* Selector de tipo antes del formulario concreto. */
+function elegirTipo(lista, titulo){
+  return new Promise(res => {
+    const velo = document.createElement('div');
+    velo.className = 'velo';
+    velo.innerHTML = '<div class="hoja"><h3>' + esc(titulo || 'Qué ha pasado') + '</h3>' +
+      '<div class="rejilla">' + lista.map(t =>
+        '<button class="btn" data-t="' + t + '">' + esc(TIPOS_EVENTO[t] || t) + '</button>').join('') +
+      '</div><button class="btn fantasma ancho" style="margin-top:12px" data-t="">Cancelar</button></div>';
+    capas().appendChild(velo);
+    velo.addEventListener('click', ev => {
+      if (ev.target === velo){ velo.remove(); res(null); return; }
+      const b = ev.target.closest('[data-t]');
+      if (!b) return;
+      velo.remove();
+      res(b.dataset.t || null);
+    });
+  });
+}
+
+async function pedirTarea(pre){
+  const alcances = [['global','Todo el jardín']]
+    .concat(estado.zonas.map(z => ['z:' + z.id, 'Zona · ' + z.nombre]))
+    .concat(estado.plantas.filter(p => p.activa).map(p => ['p:' + p.id, 'Planta · ' + p.nombre]));
+  const d = await hoja({
+    titulo:'Nueva tarea',
+    aceptar:'Crear',
     campos:[
-      { k:'perfil_nuevo', etiqueta:'Nuevo perfil hídrico', tipo:'select',
-        opciones:Object.entries(PERFILES).map(([k,v]) => [k, v.etiqueta]), valor:p.perfil_hidrico },
-      { k:'litros_nuevo', etiqueta:'Litros', tipo:'numero', valor:p.litros },
-      { k:'sustrato_nuevo', etiqueta:'Sustrato', valor:p.sustrato },
-      { k:'fecha', etiqueta:'Fecha', tipo:'fecha', valor:hoyISO() },
-      { k:'nota', etiqueta:'Nota', valor:'' },
+      { k:'texto', etiqueta:'Qué hay que hacer', valor:'', ayuda:'atar los tomates' },
+      { k:'fecha_prevista', etiqueta:'Para cuándo', tipo:'fecha', valor:(pre && pre.fecha) || hoyISO() },
+      { k:'alcance', etiqueta:'A qué afecta', tipo:'select', opciones:alcances,
+        valor:(pre && pre.plantaId) ? 'p:' + pre.plantaId : 'global' },
     ],
-    extra:'<p class="pie">El trasplante actualiza la ficha de la planta: por eso se registra como evento y no se edita a mano.</p>',
+    extra:'<p class="pie">Las tareas son para lo que no se deduce del log. Los riegos y las ventanas de temporada se calculan solos.</p>',
   });
-  if (!d) return;
-  await nuevoEvento({
-    fecha:d.fecha, alcance:{ tipo:'planta', id },
-    payload:{ tipo:'trasplante', perfil_nuevo:d.perfil_nuevo, litros_nuevo:d.litros_nuevo, sustrato_nuevo:d.sustrato_nuevo },
-    nota:d.nota,
-  });
+  if (!d || !d.texto.trim()) return;
+  const a = d.alcance === 'global' ? { tipo:'global' }
+    : d.alcance.startsWith('z:') ? { tipo:'zona', id:d.alcance.slice(2) }
+    : { tipo:'planta', id:d.alcance.slice(2) };
+  await nuevaTarea({ texto:d.texto.trim(), fecha_prevista:d.fecha_prevista, alcance:a });
   render();
 }
 
-async function pedirBaja(id){
-  const d = await hoja({
-    titulo:'Dar de baja',
-    aceptar:'Dar de baja',
-    campos:[
-      { k:'causa', etiqueta:'Causa', valor:'', ayuda:'se secó, se arrancó, se regaló' },
-      { k:'fecha', etiqueta:'Fecha', tipo:'fecha', valor:hoyISO() },
-    ],
-    extra:'<p class="pie">La planta desaparece de Hoy pero conserva todo su histórico.</p>',
-  });
-  if (!d) return;
-  await nuevoEvento({ fecha:d.fecha, alcance:{ tipo:'planta', id }, payload:{ tipo:'baja', causa:d.causa } });
-  render();
-}
-
-async function pedirSiembra(id){
-  const d = await hoja({
-    titulo:'Siembra',
-    aceptar:'Registrar',
-    campos:[
-      { k:'origen', etiqueta:'Origen', tipo:'select',
-        opciones:[['semilla','Semilla'],['esqueje','Esqueje'],['plantel','Plantel'],['compra','Compra']], valor:'semilla' },
-      { k:'fecha', etiqueta:'Fecha', tipo:'fecha', valor:hoyISO() },
-      { k:'nota', etiqueta:'Nota', valor:'' },
-    ],
-  });
-  if (!d) return;
-  await nuevoEvento({ fecha:d.fecha, alcance:{ tipo:'planta', id }, payload:{ tipo:'siembra', origen:d.origen }, nota:d.nota });
-  render();
-}
-
-async function pedirNota(id){
-  const d = await hoja({
-    titulo:'Anotar',
-    aceptar:'Guardar',
-    campos:[
-      { k:'nota', etiqueta:'Nota', tipo:'textarea', valor:'' },
-      { k:'fecha', etiqueta:'Fecha', tipo:'fecha', valor:hoyISO() },
-    ],
-  });
-  if (!d || !d.nota.trim()) return;
-  await nuevoEvento({ fecha:d.fecha, alcance:{ tipo:'planta', id }, payload:{ tipo:'nota' }, nota:d.nota });
+async function completarTarea(id){
+  const t = estado.tareas.find(x => x.id === id);
+  if (!t) return;
+  const e = await nuevoEvento({ fecha:hoyISO(), alcance:t.alcance, payload:{ tipo:'nota' }, nota:t.texto });
+  t.hecha_evento_id = e.id;
+  await guardarTarea(t);
   render();
 }
 
@@ -1268,17 +1848,200 @@ async function pedirNota(id){
 
 let filtroRegistro = 'todos';
 
-function vistaRegistro(){
+/* La agenda es la pantalla de consulta y de corrección del pasado.
+   En móvil, scroll vertical por días: una rejilla mensual daría celdas de 45 px. */
+function vistaAgenda(){
   const evs = estado.eventos
     .filter(e => filtroRegistro === 'todos' || e.payload.tipo === filtroRegistro)
     .sort((a,b) => b.fecha.localeCompare(a.fecha) || b.creado_en.localeCompare(a.creado_en))
-    .slice(0, 300);
+    .slice(0, 250);
+
   const chips = [['todos','Todo']].concat(Object.entries(TIPOS_EVENTO))
     .map(([k,t]) => '<button class="chip' + (filtroRegistro === k ? ' on' : '') +
       '" data-a="filtro" data-v="' + k + '">' + t + '</button>').join('');
-  return '<section class="bloque"><div class="chips" style="margin-bottom:14px">' + chips + '</div>' +
-    '<div class="tarjeta">' + listaEventos(evs, true) + '</div></section>' +
-    '<div class="fila-btns"><button class="btn" data-a="lluvia">Ha llovido</button></div>';
+
+  let cuerpo = '';
+  if (!evs.length){
+    cuerpo = '<div class="vacio">Ningún evento con este filtro.</div>';
+  } else {
+    const porDia = new Map();
+    evs.forEach(e => { if (!porDia.has(e.fecha)) porDia.set(e.fecha, []); porDia.get(e.fecha).push(e); });
+    const dias = [...porDia.keys()];
+    let previo = null;
+    cuerpo = dias.map(d => {
+      let hueco = '';
+      if (previo){
+        const n = difDias(d, previo) - 1;
+        if (n > 0) hueco = '<button class="hueco" data-a="dia-nuevo" data-v="' + sumarDias(previo, -1) + '">' +
+          n + (n === 1 ? ' día' : ' días') + ' sin nada · anotar</button>';
+      }
+      previo = d;
+      return hueco + '<div class="dia">' +
+        '<button class="dia-cab" data-a="dia-nuevo" data-v="' + d + '">' +
+          '<span class="crece">' + esc(diaConNombre(d)) + '</span><span class="mas">+</span>' +
+        '</button>' +
+        '<div class="tarjeta">' + listaEventos(porDia.get(d), true, false) + '</div></div>';
+    }).join('');
+  }
+
+  return bandaAnualHTML() +
+    '<section class="bloque"><div class="chips" style="margin-bottom:14px">' + chips + '</div>' +
+    cuerpo + '</section>' +
+    '<div class="fila-btns"><button class="btn" data-a="dia-nuevo" data-v="' + fechaRegistro + '">Anotar algo</button>' +
+    '<button class="btn" data-a="lluvia">Ha llovido</button></div>';
+}
+
+function diaConNombre(iso){
+  const [a,m,d] = iso.split('-').map(Number);
+  const f = new Intl.DateTimeFormat('es-ES', { weekday:'short', day:'numeric', month:'short' })
+    .format(new Date(a, m-1, d));
+  const hoy = hoyISO();
+  return (iso === hoy ? 'Hoy · ' : iso === sumarDias(hoy,-1) ? 'Ayer · ' : '') + f;
+}
+
+/* Banda de doce meses: la única vista anual que de verdad se quiere. */
+function bandaAnualHTML(){
+  const filas = bandaAnual();
+  if (!filas.size)
+    return '<section class="bloque"><h2>Año</h2><p class="pie">Asigna un taxón a tus plantas y aquí verás en qué quincena cae cada ventana.</p></section>';
+  const qHoy = qDeFecha(hoyISO());
+  const iniciales = 'EFMAMJJASOND';
+  const cabecera = '<div class="banda-meses"><span class="banda-et"></span><span class="banda-celdas">' +
+    iniciales.split('').map((l,i) =>
+      '<b' + (Math.floor(qHoy/2) === i ? ' class="mes-hoy"' : '') + '>' + l + '</b>').join('') +
+    '</span></div>';
+
+  const orden = Object.keys(CLASES_VENTANA).filter(c => filas.has(c));
+  const cuerpo = orden.map(c => {
+    const meta = CLASES_VENTANA[c], s = filas.get(c);
+    const celdas = Array.from({length:24}, (_, i) =>
+      '<i class="' + (s.has(i) ? 'on' : '') + (i === qHoy ? ' ahora' : '') +
+      '" style="' + (s.has(i) ? 'background:' + meta.color : '') + '"></i>').join('');
+    return '<div class="banda-fila"><span class="banda-et">' + esc(meta.etiqueta) + '</span>' +
+      '<span class="banda-celdas">' + celdas + '</span></div>';
+  }).join('');
+
+  return '<section class="bloque"><h2>Año</h2><div class="tarjeta banda">' + cabecera + cuerpo + '</div></section>';
+}
+
+/* ── Taxones ── */
+
+function vistaTaxones(){
+  if (!estado.taxones.length)
+    return '<div class="vacio">Sin taxones. Importa el catálogo semilla desde Ajustes o crea el tuyo.</div>' +
+      '<button class="btn principal ancho" data-a="taxon-nuevo">Nuevo taxón</button>';
+  const lista = estado.taxones.slice().sort((a,b) => a.nombre.localeCompare(b.nombre,'es')).map(t => {
+    const n = estado.plantas.filter(p => p.taxon_id === t.id).length;
+    return '<div class="fila"><button class="toggle" data-a="taxon-ver" data-id="' + t.id + '">' +
+      '<span class="cuerpo"><span class="nombre">' + esc(t.nombre) + '</span>' +
+      '<span class="meta">' + (t.ventanas || []).length + ' ventanas · ' +
+      (n ? n + (n === 1 ? ' planta' : ' plantas') : 'sin plantas') + '</span></span>' +
+      '<span class="abrir">›</span></button></div>';
+  }).join('');
+  return '<section class="bloque"><div class="lista">' + lista + '</div></section>' +
+    '<button class="btn principal ancho" data-a="taxon-nuevo">Nuevo taxón</button>';
+}
+
+function vistaTaxon(id){
+  const t = taxonPorId(id);
+  if (!t) return '<div class="vacio">Ese taxón ya no existe.</div>';
+  const hoy = hoyISO();
+  const ventanas = (t.ventanas || []).map((v, i) => {
+    const meta = CLASES_VENTANA[v.clase] || { etiqueta:v.clase, color:'var(--tenue)' };
+    const dentro = ventanaContiene(v, hoy);
+    return '<div class="dato"><span style="color:var(--texto)">' +
+      '<span class="punto" style="background:' + meta.color + ';display:inline-block;margin-right:8px"></span>' +
+      esc(meta.etiqueta) + (dentro ? ' <span class="pie">· abierta hoy</span>' : '') +
+      '<br><span class="pie">' + esc(textoVentana(v)) + (v.nota ? ' · ' + esc(v.nota) : '') + '</span></span>' +
+      '<span style="white-space:nowrap">' +
+      '<button class="btn fantasma" style="min-height:34px;padding:4px 10px" data-a="ventana-editar" data-id="' + t.id + '" data-v="' + i + '">Editar</button>' +
+      '<button class="btn fantasma peligro" style="min-height:34px;padding:4px 10px" data-a="ventana-borrar" data-id="' + t.id + '" data-v="' + i + '">✕</button>' +
+      '</span></div>';
+  }).join('') || '<div class="vacio">Sin ventanas todavía.</div>';
+
+  const plantas = estado.plantas.filter(p => p.taxon_id === t.id);
+  return '<section class="bloque"><h2>Ventanas</h2><div class="tarjeta">' + ventanas + '</div>' +
+    '<div class="fila-btns" style="margin-top:10px">' +
+      '<button class="btn" data-a="ventana-nueva" data-id="' + t.id + '">Añadir ventana</button>' +
+      '<button class="btn" data-a="taxon-editar" data-id="' + t.id + '">Renombrar</button>' +
+    '</div></section>' +
+    '<section class="bloque"><h2>Plantas · ' + plantas.length + '</h2><div class="lista">' +
+      (plantas.map(p => '<div class="fila"><button class="toggle" data-a="ficha" data-id="' + p.id + '">' +
+        '<span class="cuerpo"><span class="nombre">' + esc(p.nombre) + '</span></span></button></div>').join('') ||
+        '<div class="vacio">Ninguna planta usa este taxón.</div>') +
+    '</div>' +
+    (plantas.length ? '' : '<button class="btn peligro ancho" style="margin-top:10px" data-a="taxon-borrar" data-id="' + t.id + '">Borrar taxón</button>') +
+    '</section>';
+}
+
+async function pedirTaxon(t){
+  const d = await hoja({
+    titulo: t ? 'Renombrar taxón' : 'Nuevo taxón',
+    campos:[{ k:'nombre', etiqueta:'Nombre', valor:t ? t.nombre : '', ayuda:'Tomate, Limonero…' }],
+  });
+  if (!d || !d.nombre.trim()) return null;
+  const obj = t ? Object.assign({}, t, { nombre:d.nombre.trim() })
+                : { id:uid(), nombre:d.nombre.trim(), ventanas:[] };
+  await guardarTaxon(obj);
+  render();
+  return obj.id;
+}
+
+async function pedirVentana(taxonId, indice){
+  const t = taxonPorId(taxonId);
+  if (!t) return;
+  const v = indice != null ? t.ventanas[indice] : null;
+  const meses = MESES.map((m,i) => [i+1, m[0].toUpperCase() + m.slice(1)]);
+  const quincenas = [['0','todo el mes'],['1','1ª quincena'],['2','2ª quincena']];
+  const d = await hoja({
+    titulo: v ? 'Editar ventana' : 'Nueva ventana',
+    campos:[
+      { k:'clase', etiqueta:'Clase', tipo:'select', valor:v ? v.clase : 'poda',
+        opciones:Object.entries(CLASES_VENTANA).map(([k,m]) => [k, m.etiqueta]) },
+      { k:'desde_mes', etiqueta:'Desde el mes', tipo:'select', opciones:meses, valor:v ? v.desde.mes : 3 },
+      { k:'desde_q', etiqueta:'Desde la quincena', tipo:'select', opciones:quincenas, valor:v ? (v.desde.quincena || 0) : 0 },
+      { k:'hasta_mes', etiqueta:'Hasta el mes', tipo:'select', opciones:meses, valor:v ? v.hasta.mes : 5 },
+      { k:'hasta_q', etiqueta:'Hasta la quincena', tipo:'select', opciones:quincenas, valor:v ? (v.hasta.quincena || 0) : 0 },
+      { k:'cada_dias', etiqueta:'Repetir cada (días, 0 = una vez por temporada)', tipo:'numero',
+        valor:v && v.repetible ? v.repetible.cada_dias : 0 },
+      { k:'nota', etiqueta:'Nota', valor:v ? (v.nota || '') : '' },
+    ],
+    extra:'<p class="pie">Si el mes de fin es anterior al de inicio, la ventana cruza el cambio de año: noviembre → febrero es una sola temporada.</p>',
+  });
+  if (!d) return;
+  const nueva = {
+    clase: d.clase,
+    desde: { mes:Number(d.desde_mes) }, hasta: { mes:Number(d.hasta_mes) },
+    nota: d.nota || '',
+  };
+  if (Number(d.desde_q)) nueva.desde.quincena = Number(d.desde_q);
+  if (Number(d.hasta_q)) nueva.hasta.quincena = Number(d.hasta_q);
+  if (d.cada_dias > 0) nueva.repetible = { cada_dias: Number(d.cada_dias) };
+
+  const ventanas = (t.ventanas || []).slice();
+  if (indice != null) ventanas[indice] = nueva; else ventanas.push(nueva);
+  await guardarTaxon(Object.assign({}, t, { ventanas }));
+  render();
+}
+
+/* Nunca sobrescribe: reimportar no pisa las correcciones propias. */
+async function importarSemilla(){
+  const existentes = new Set(estado.taxones.map(t => t.nombre.trim().toLowerCase()));
+  let nuevos = 0, saltados = 0;
+  for (const [nombre, ventanas] of SEMILLA_TAXONES){
+    if (existentes.has(nombre.trim().toLowerCase())){ saltados++; continue; }
+    const t = { id: uid(), nombre, ventanas: ventanas.map(([clase, dm, dq, hm, hq, cada, nota]) => {
+      const v = { clase, desde:{ mes:dm }, hasta:{ mes:hm }, nota: nota || '' };
+      if (dq) v.desde.quincena = dq;
+      if (hq) v.hasta.quincena = hq;
+      if (cada) v.repetible = { cada_dias: cada };
+      return v;
+    })};
+    await guardarTaxon(t);
+    nuevos++;
+  }
+  render();
+  aviso('Catálogo: ' + nuevos + ' taxones añadidos' + (saltados ? ', ' + saltados + ' ya los tenías' : '') + '.');
 }
 
 function vistaAjustes(){
@@ -1289,10 +2052,26 @@ function vistaAjustes(){
     '<button class="btn fantasma peligro" style="min-height:32px;padding:4px 10px" data-a="zona-borrar" data-id="' + z.id + '">Borrar</button></span></div>'
   ).join('') || '<div class="vacio">Sin zonas.</div>';
 
-  const registros = estado.zonas.length + ' zonas · ' + estado.plantas.length + ' plantas · ' + estado.eventos.length + ' eventos';
+  const registros = estado.zonas.length + ' zonas · ' + estado.plantas.length + ' plantas · ' +
+    estado.eventos.length + ' eventos · ' + estado.taxones.length + ' taxones · ' + estado.tareas.length + ' tareas';
+
+  const conTaxon = estado.plantas.filter(p => p.activa && p.taxon_id).length;
+  const activas = estado.plantas.filter(p => p.activa).length;
 
   return '<section class="bloque"><h2>Zonas</h2><div class="tarjeta">' + zonas + '</div>' +
     '<button class="btn ancho" style="margin-top:10px" data-a="zona-nueva">Nueva zona</button></section>' +
+
+    '<section class="bloque"><h2>Taxones</h2><div class="tarjeta">' +
+      dato('En el catálogo', estado.taxones.length + ' taxones') +
+      dato('Plantas con taxón', conTaxon + ' de ' + activas) +
+    '</div>' +
+    '<div class="fila-btns" style="margin-top:10px">' +
+      '<button class="btn" data-a="taxones">Ver taxones</button>' +
+      '<button class="btn" data-a="semilla">Importar catálogo semilla</button>' +
+    '</div>' +
+    '<p class="pie" style="margin-top:8px">El catálogo semilla son ' + SEMILLA_TAXONES.length +
+    ' taxones de clima mediterráneo como punto de partida: estará mal para tu microclima y se corrige a mano. ' +
+    'Reimportarlo nunca pisa lo que ya tengas.</p></section>' +
 
     '<section class="bloque"><h2>Copia de seguridad</h2><div class="tarjeta">' +
       dato('Datos', registros) +
@@ -1344,10 +2123,21 @@ function render(){
     cab.innerHTML = '<div class="crece"><h1>Plantas</h1></div>';
     cuerpo = vistaPlantas();
     pintarTabs('plantas');
-  } else if (pantalla === 'registro'){
-    cab.innerHTML = '<div class="crece"><h1>Registro</h1></div>';
-    cuerpo = vistaRegistro();
-    pintarTabs('registro');
+  } else if (pantalla === 'agenda' || pantalla === 'registro'){
+    cab.innerHTML = '<div class="crece"><h1>Agenda</h1></div>';
+    cuerpo = vistaAgenda();
+    pintarTabs('agenda');
+  } else if (pantalla === 'taxones'){
+    cab.innerHTML = '<button class="btn fantasma" data-a="atras" style="min-height:38px;padding:6px 10px">‹</button>' +
+      '<div class="crece"><h1>Taxones</h1></div>';
+    cuerpo = vistaTaxones();
+    pintarTabs('ajustes');
+  } else if (pantalla === 'taxon'){
+    const t = taxonPorId(arg);
+    cab.innerHTML = '<button class="btn fantasma" data-a="atras" style="min-height:38px;padding:6px 10px">‹</button>' +
+      '<div class="crece"><h1>' + esc(t ? t.nombre : 'Taxón') + '</h1></div>';
+    cuerpo = vistaTaxon(arg);
+    pintarTabs('ajustes');
   } else if (pantalla === 'ajustes'){
     cab.innerHTML = '<div class="crece"><h1>Ajustes</h1></div>';
     cuerpo = vistaAjustes();
@@ -1418,10 +2208,22 @@ document.addEventListener('click', async ev => {
       await nuevoEvento({ fecha:hoyISO(), alcance:{ tipo:'planta', id }, payload:{ tipo:'riego' } });
       render();
       break;
-    case 'nota':        await pedirNota(id); break;
-    case 'trasplante':  await pedirTrasplante(id); break;
-    case 'siembra':     await pedirSiembra(id); break;
-    case 'baja':        await pedirBaja(id); break;
+    case 'nota':        if (await pedirEvento('nota', [id])) render(); break;
+    case 'trasplante':  if (await pedirEvento('trasplante', [id])) render(); break;
+    case 'siembra':     if (await pedirEvento('siembra', [id])) render(); break;
+    case 'baja':        if (await pedirEvento('baja', [id])) render(); break;
+    case 'evento-otro': {
+      const t = await elegirTipo(['poda','abonado','cosecha','siembra','trasplante','nota','baja'], 'Qué ha pasado');
+      if (t && await pedirEvento(t, [id])) render();
+      break;
+    }
+    case 'tarea-nueva':  await pedirTarea({ plantaId:id, fecha:fechaRegistro }); break;
+    case 'tarea-hecha':  await completarTarea(id); break;
+    case 'tarea-fuera': {
+      const t = estado.tareas.find(x => x.id === id);
+      if (t){ t.descartada = true; await guardarTarea(t); render(); }
+      break;
+    }
     case 'revivir': {
       const p = plantaPorId(id);
       p.activa = true;
@@ -1432,6 +2234,62 @@ document.addEventListener('click', async ev => {
     case 'ev-borrar':
     case 'ev-fecha':    await accionesEvento(a, id); break;
     case 'filtro':      filtroRegistro = v; render(); break;
+    case 'temporada':   temporadaAbierta = !temporadaAbierta; render(); break;
+    case 'grupo':       grupoAbierto = grupoAbierto === b.dataset.k ? null : b.dataset.k; render(); break;
+    case 'temp-hecho': {
+      const g = gruposTemporada(fechaRegistro).find(x => x.clave === b.dataset.k);
+      if (!g) break;
+      const ids = id ? [id] : g.plantas.map(p => p.id);
+      if (await pedirEvento(g.meta.evento, ids, fechaRegistro)) render();
+      break;
+    }
+    case 'dia-nuevo': {
+      const t = await elegirTipo(['riego','poda','abonado','cosecha','siembra','trasplante','nota','baja'], 'Anotar en ' + fechaCorta(v));
+      if (!t) break;
+      const activas = estado.plantas.filter(p => p.activa);
+      if (!activas.length){ aviso('Primero hace falta una planta.'); break; }
+      const d = await hoja({
+        titulo:'¿A qué planta?',
+        aceptar:'Seguir',
+        campos:[{ k:'planta', etiqueta:'Planta', tipo:'select',
+          opciones:activas.map(p => [p.id, p.nombre]), valor:activas[0].id }],
+      });
+      if (d && await pedirEvento(t, [d.planta], v)) render();
+      break;
+    }
+    case 'taxones':     location.hash = '#/taxones'; break;
+    case 'taxon-ver':   location.hash = '#/taxon/' + id; break;
+    case 'taxon-nuevo': {
+      const nuevo = await pedirTaxon(null);
+      if (nuevo) location.hash = '#/taxon/' + nuevo;
+      break;
+    }
+    case 'taxon-editar': await pedirTaxon(taxonPorId(id)); break;
+    case 'taxon-borrar': {
+      if (estado.plantas.some(p => p.taxon_id === id)){ aviso('Hay plantas usando este taxón.'); break; }
+      if (await confirmar('¿Borrar el taxón y sus ventanas?', 'Borrar')){
+        await borrarTaxon(id);
+        location.hash = '#/taxones';
+      }
+      break;
+    }
+    case 'ventana-nueva':  await pedirVentana(id, null); break;
+    case 'ventana-editar': await pedirVentana(id, Number(v)); break;
+    case 'ventana-borrar': {
+      const t = taxonPorId(id);
+      if (!t) break;
+      if (await confirmar('¿Borrar esta ventana?', 'Borrar')){
+        const ventanas = t.ventanas.slice();
+        ventanas.splice(Number(v), 1);
+        await guardarTaxon(Object.assign({}, t, { ventanas }));
+        render();
+      }
+      break;
+    }
+    case 'semilla':
+      if (await confirmar('Se añadirán los taxones que falten. Los que ya tengas no se tocan.', 'Importar'))
+        await importarSemilla();
+      break;
     case 'zona-nueva':  await pedirZona(null); break;
     case 'zona-editar': await pedirZona(estado.zonas.find(z => z.id === id)); break;
     case 'zona-borrar': {
